@@ -15,3 +15,4 @@ print(df.head())
 #incorporate a bayesian hierarchical model, with inputs of
 #our datatypes, as well as cases from our last project
 #need to check the granularity of data, pivot if annual
+#feed in cases.csv for testing on our own data
