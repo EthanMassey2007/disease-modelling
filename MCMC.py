@@ -1,0 +1,1 @@
+#MCMC for posteriors for bayesian model

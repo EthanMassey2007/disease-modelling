@@ -36,3 +36,4 @@ with pm.Model() as model:
 #our datatypes, as well as cases from our last project
 #need to check the granularity of data, pivot if annual
 #feed in cases.csv for testing on our own data
+#maybe try a monte carlo markov chain simulation
