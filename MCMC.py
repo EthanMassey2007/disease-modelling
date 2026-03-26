@@ -1,32 +1,40 @@
 import numpy as np
-import matplotlib.pyplot as plt
+import pymc as pm
+import arviz as az
 
-# Target distribution (unnormalized) — example: standard normal
-def target(x):
-    return np.exp(-0.5 * x**2)
+# Simulated data
+np.random.seed(42)
+n_groups = 5
+n_per_group = 20
 
-# MCMC parameters
-n_samples = 10000
-samples = np.zeros(n_samples)
-current = 0  # starting point
-proposal_std = 1.0
+true_mu_group = np.random.normal(0, 2, n_groups)
+data = [np.random.normal(mu, 1, n_per_group) for mu in true_mu_group]
 
-for i in range(n_samples):
-    # Propose a new point
-    proposal = np.random.normal(current, proposal_std)
-    
-    # Acceptance ratio
-    acceptance_ratio = target(proposal) / target(current)
-    
-    # Accept or reject
-    if np.random.rand() < acceptance_ratio:
-        current = proposal
-    
-    samples[i] = current
+# Flatten data
+y = np.concatenate(data)
+group_idx = np.concatenate([[i]*n_per_group for i in range(n_groups)])
 
-# Plot results
-x = np.linspace(-4, 4, 1000)
-plt.hist(samples, bins=50, density=True, alpha=0.6, label="MCMC Samples")
-plt.plot(x, (1/np.sqrt(2*np.pi))*np.exp(-0.5*x**2), 'r-', label="True PDF")
-plt.legend()
-plt.show()
+# Model
+with pm.Model() as model:
+
+    # Hyperpriors (global level)
+    mu_global = pm.Normal("mu_global", mu=0, sigma=5)
+    sigma_global = pm.HalfNormal("sigma_global", sigma=5)
+
+    # Group-level parameters
+    mu_group = pm.Normal("mu_group", mu=mu_global, sigma=sigma_global, shape=n_groups)
+
+    # Observation noise
+    sigma = pm.HalfNormal("sigma", sigma=5)
+
+    # Likelihood
+    y_obs = pm.Normal("y_obs", mu=mu_group[group_idx], sigma=sigma, observed=y)
+
+    # MCMC sampling
+    trace = pm.sample(2000, tune=1000, return_inferencedata=True)
+
+# Posterior summary
+print(az.summary(trace, var_names=["mu_global", "sigma_global", "mu_group", "sigma"]))
+
+# Optional: visualize
+az.plot_trace(trace)
