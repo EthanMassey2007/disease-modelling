@@ -44,3 +44,6 @@ print(az.summary(trace, var_names=["mu_global", "sigma_global", "mu_group", "sig
 
 # Optional: visualize
 az.plot_trace(trace)
+
+#Maybe bring in our own adjacency matrix from last project and compare to this, and run both to get posteriors with MCMC
+#Need to do more research on background behind MCMC and Bayesian model connectedness 
