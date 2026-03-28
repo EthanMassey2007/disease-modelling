@@ -82,16 +82,13 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
    mae = float(np.mean(np.abs(y_true - y_pred)))
    rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
-
    total_actual = float(np.sum(np.abs(y_true)))
    wape = float(np.sum(np.abs(y_true - y_pred)) / max(total_actual, 1e-9))
    accuracy_pct = max(0.0, 100.0 * (1.0 - wape))
 
-
    sst = float(np.sum((y_true - y_true.mean()) ** 2))
    sse = float(np.sum((y_true - y_pred) ** 2))
    r2 = float(1.0 - sse / sst) if sst > 0 else np.nan
-
 
    return {
        "mae": mae,
@@ -117,12 +114,10 @@ APPLY_LOG1P_TO_SKEWED_FEATURES = True
 USE_FULL_COVARIATE_SET = True
 SAVE_RESULTS_CSV = True
 
-
 # This accuracy is based on WAPE:
 # accuracy_pct = 100 * (1 - sum(|actual - predicted|) / sum(actual))
 # Higher is better. 100% is perfect.
 ACCURACY_LABEL = "WAPE-based accuracy (%)"
-
 
 # Keep the same model settings as your original script.
 # If the lag sweep is too slow, reduce these.
@@ -133,13 +128,11 @@ CORES = 4
 TARGET_ACCEPT = 0.98
 RANDOM_SEED = 42
 
-
 SKEWED_FEATURES = [
    "air_pass_in",
    "road_conec_in",
    "fluv_conec_in",
 ]
-
 
 BASE_COVARIATES_NO_LAG = [
    "rainfall",
@@ -148,7 +141,6 @@ BASE_COVARIATES_NO_LAG = [
    "idhm",
    "air_pass_in",
 ]
-
 
 FULL_COVARIATES_NO_LAG = [
    "rainfall",
@@ -160,15 +152,11 @@ FULL_COVARIATES_NO_LAG = [
    "fluv_conec_in",
 ]
 
-
-
-
 # =========================================================
 # File paths
 # =========================================================
 base_dir = os.path.dirname(__file__)
 data_dir = os.path.join(base_dir, "data")
-
 
 cases_file = os.path.join(data_dir, "cases.csv")
 temperature_file = os.path.join(data_dir, "temperature.csv")
@@ -176,13 +164,9 @@ humidity_file = os.path.join(data_dir, "humidity.csv")
 rainfall_file = os.path.join(data_dir, "rainfall.csv")
 idhm_file = os.path.join(data_dir, "idhm.csv")
 
-
 municipios_file = os.path.join(data_dir, "municipios.csv")
 aero_file = os.path.join(data_dir, "aero_anac_2017_2023.parquet")
 fluvi_file = os.path.join(data_dir, "fluvi_road_ibge.parquet")
-
-
-
 
 # =========================================================
 # Shared preprocessing (done once)
