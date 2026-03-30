@@ -8,6 +8,13 @@ adjacency_matrix = os.path.join(os.path.dirname(__file__),"data","adjacency_matr
 aero_anac = os.path.join(os.path.dirname(__file__), "data", "aero_anac_2017_2023.parquet")
 fluvi_road = os.path.join(os.path.dirname(__file__),"data","fluvi_road_ibge.parquet")
 
+cases = os.path.join(os.path.dirname(__file__),"data","cases.csv")
+humidity = os.path.join(os.path.dirname(__file__), "data", "humidity.csv")
+idhm = os.path.join(os.path.dirname(__file__),"data","idhm.csv")
+rainfall = os.path.join(os.path.dirname(__file__),"data","rainfall.csv")
+temperature = os.path.join(os.path.dirname(__file__), "data", "temperature.csv")
+
+
 # Simulated data
 np.random.seed(42)
 n_groups = 5
