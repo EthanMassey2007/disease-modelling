@@ -32,16 +32,11 @@ def normalize_municipio_name(name):
    name = str(name).strip().lower()
    name = re.sub(r"/[a-z]{2}$", "", name)
 
-
    name = unicodedata.normalize("NFKD", name)
    name = "".join(c for c in name if not unicodedata.combining(c))
 
-
    name = re.sub(r"\s+", " ", name).strip()
    return name
-
-
-
 
 def iso_week_to_date(year_series, week_series):
    dt = pd.to_datetime(
@@ -54,20 +49,11 @@ def iso_week_to_date(year_series, week_series):
    )
    return dt
 
-
-
-
 def weighted_average(values, weights):
    return np.average(values, weights=weights)
 
-
-
-
 def da_mean(x):
    return float(np.asarray(x).mean())
-
-
-
 
 def to_entity_sample_array(x, entity_size):
    """
@@ -94,9 +80,6 @@ def to_entity_sample_array(x, entity_size):
        f"Could not align array with entity_size={entity_size}. "
        f"Observed shape: {arr.shape}"
    )
-
-
-
 
 def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
    y_true = np.asarray(y_true, dtype=float)
@@ -125,9 +108,6 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
        "r2": r2,
    }
 
-
-
-
 # =========================================================
 # Config
 # =========================================================
@@ -135,11 +115,9 @@ TARGET_STATE = "RJ"
 START_YEAR = 2017
 END_YEAR = 2019
 
-
 START_LAG = 2
 END_LAG = 2
 LAG_VALUES = list(range(START_LAG, END_LAG + 1))
-
 
 MAKE_PLOTS = True
 APPLY_LOG1P_TO_SKEWED_FEATURES = True
