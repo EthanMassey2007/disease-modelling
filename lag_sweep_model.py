@@ -10,9 +10,6 @@ import matplotlib.pyplot as plt
 from sklearn.preprocessing import StandardScaler
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-
-
-
 # =========================================================
 # Helpers
 # =========================================================
@@ -21,13 +18,9 @@ def clean_columns(df: pd.DataFrame) -> pd.DataFrame:
    df.columns = df.columns.str.strip().str.lower()
    return df
 
-
-
-
 def normalize_municipio_name(name):
    if pd.isna(name):
        return np.nan
-
 
    name = str(name).strip().lower()
    name = re.sub(r"/[a-z]{2}$", "", name)
