@@ -403,8 +403,8 @@ with pm.Model(coords=coords) as model:
     group_data = pm.Data("group_data", group_idx, dims="obs_id")
 
     # non-centered hierarchical intercepts
-    alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=1.5)
-    sigma_group = pm.HalfNormal("sigma_group", sigma=1.0)
+    alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=1.0)
+    sigma_group = pm.HalfNormal("sigma_group", sigma=0.7)
     z_group = pm.Normal("z_group", mu=0.0, sigma=1.0, dims="municipio")
     alpha_group = pm.Deterministic(
         "alpha_group",
@@ -413,7 +413,7 @@ with pm.Model(coords=coords) as model:
     )
 
     # regression coefficients
-    beta = pm.Normal("beta", mu=0.0, sigma=0.5, dims="covariate")
+    beta = pm.Normal("beta", mu=0.0, sigma=0.3, dims="covariate")
 
     # linear predictor
     eta = alpha_group[group_data] + pm.math.dot(X_data, beta)
@@ -428,11 +428,11 @@ with pm.Model(coords=coords) as model:
     pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha_nb, observed=y, dims="obs_id")
 
     trace = pm.sample(
-        draws=1000,
-        tune=1000,
-        chains=2,
-        cores=2,
-        target_accept=0.90,
+        draws=1500,
+        tune=3000,
+        chains=4,
+        cores=4,
+        target_accept=0.97,
         init="adapt_diag",
         random_seed=42,
         return_inferencedata=True,
@@ -445,7 +445,12 @@ with pm.Model(coords=coords) as model:
 summary_vars = ["alpha_global", "sigma_group", "alpha_nb", "beta"]
 summary = az.summary(trace, var_names=summary_vars, round_to=4)
 print(summary)
-
+summary = az.summary(trace, round_to=4)
+print(az.summary(trace, round_to=4).sort_values("r_hat", ascending=False).head(20))
+print(az.summary(trace, round_to=4).sort_values("ess_bulk").head(20))
+print(az.rhat(trace))
+print(az.ess(trace, method="bulk"))
+print(az.ess(trace, method="tail"))
 # Optional plots
 az.plot_trace(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
 az.plot_posterior(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
