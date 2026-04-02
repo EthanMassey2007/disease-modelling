@@ -12,6 +12,7 @@ from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+
 # =========================================================
 # Helpers
 # =========================================================
@@ -26,21 +27,20 @@ def normalize_municipio_name(name):
 
     name = str(name).strip().lower()
 
-    # remove trailing /UF, e.g. "São Paulo/SP" -> "São Paulo"
+    # Remove trailing /UF, e.g. "São Paulo/SP" -> "São Paulo"
     name = re.sub(r"/[a-z]{2}$", "", name)
 
-    # remove accents
+    # Remove accents
     name = unicodedata.normalize("NFKD", name)
     name = "".join(c for c in name if not unicodedata.combining(c))
 
-    # normalize whitespace
+    # Normalize whitespace
     name = re.sub(r"\s+", " ", name).strip()
 
     return name
 
 
 def iso_week_to_month(year_series, week_series):
-    # ISO week -> Monday date -> month
     dt = pd.to_datetime(
         year_series.astype(str)
         + "-W"
@@ -50,6 +50,31 @@ def iso_week_to_month(year_series, week_series):
         errors="coerce",
     )
     return dt, dt.dt.month
+
+
+# =========================================================
+# Config
+# =========================================================
+USE_FULL_COVARIATE_SET = False
+MAKE_PLOTS = True
+
+# Start with smaller covariate set for better convergence
+BASE_COVARIATES = [
+    "temperature", 
+    "rainfall",
+    "idhm",
+    "road_conec_in",
+]
+
+FULL_COVARIATES = [
+    "temperature",
+    "humidity",
+    "rainfall",
+    "idhm",
+    "air_pass_in",
+    "road_conec_in",
+    "fluv_conec_in",
+]
 
 
 # =========================================================
@@ -68,6 +93,7 @@ municipios_file = os.path.join(data_dir, "municipios.csv")
 aero_file = os.path.join(data_dir, "aero_anac_2017_2023.parquet")
 fluvi_file = os.path.join(data_dir, "fluvi_road_ibge.parquet")
 
+
 # =========================================================
 # Load data
 # =========================================================
@@ -81,40 +107,41 @@ municipios_df = clean_columns(pd.read_csv(municipios_file))
 aero_df = clean_columns(pd.read_parquet(aero_file))
 fluvi_df = clean_columns(pd.read_parquet(fluvi_file))
 
+
 # =========================================================
 # Normalize municipio names in the main CSVs
 # =========================================================
 for d in [cases_df, temp_df, hum_df, rain_df, idhm_df]:
     d["municipio"] = d["municipio"].apply(normalize_municipio_name)
 
+
 # =========================================================
-# Build city -> IBGE lookup from municipios.csv
-# municipios.csv is time series, so deduplicate
+# Build RJ-only city -> IBGE lookup from municipios.csv
+# This fixes ambiguous names like "valenca"
 # =========================================================
+municipios_df["state_code"] = municipios_df["city"].astype(str).str.extract(r"/([A-Z]{2})$")
 municipios_df["city_clean"] = municipios_df["city"].apply(normalize_municipio_name)
 municipios_df["ibgeid"] = pd.to_numeric(municipios_df["ibgeid"], errors="coerce").astype("Int64")
+
+# Restrict to RJ only
+municipios_df = municipios_df[municipios_df["state_code"] == "RJ"].copy()
 
 lookup_df = (
     municipios_df[["city_clean", "ibgeid"]]
     .dropna()
     .drop_duplicates()
+    .rename(columns={"city_clean": "municipio", "ibgeid": "ibge_code"})
 )
 
-# detect ambiguous city -> multiple ibge mappings
-dup_counts = lookup_df.groupby("city_clean")["ibgeid"].nunique()
-ambiguous = dup_counts[dup_counts > 1]
+dup_counts = lookup_df.groupby("municipio")["ibge_code"].nunique()
+ambiguous_after_filter = dup_counts[dup_counts > 1]
 
-if len(ambiguous) > 0:
-    print("WARNING: some cleaned city names map to multiple IBGE IDs.")
-    print(ambiguous.head(20))
+print("Ambiguous names after RJ filter:")
+print(ambiguous_after_filter)
 
-# keep first unique mapping per city
-lookup_df = lookup_df.drop_duplicates(subset=["city_clean"]).rename(
-    columns={"city_clean": "municipio", "ibgeid": "ibge_code"}
-)
 
 # =========================================================
-# Force numeric types where needed
+# Numeric conversion
 # =========================================================
 for d in [cases_df, temp_df, hum_df, rain_df, idhm_df]:
     d["year"] = pd.to_numeric(d["year"], errors="coerce").astype("Int64")
@@ -125,6 +152,7 @@ temp_df["temperature"] = pd.to_numeric(temp_df["temperature"], errors="coerce")
 hum_df["humidity"] = pd.to_numeric(hum_df["humidity"], errors="coerce")
 rain_df["rainfall"] = pd.to_numeric(rain_df["rainfall"], errors="coerce")
 idhm_df["idhm"] = pd.to_numeric(idhm_df["idhm"], errors="coerce")
+
 
 # =========================================================
 # Aggregate each input BEFORE merging
@@ -149,7 +177,6 @@ rain_df = (
     .agg({"rainfall": "mean"})
 )
 
-# idhm is structured like the others in your files
 idhm_df = (
     idhm_df.groupby(["municipio", "year", "week"], as_index=False)
     .agg({"idhm": "mean"})
@@ -160,6 +187,7 @@ print("temp_df columns:", temp_df.columns.tolist())
 print("hum_df columns:", hum_df.columns.tolist())
 print("rain_df columns:", rain_df.columns.tolist())
 print("idhm_df columns:", idhm_df.columns.tolist())
+
 
 # =========================================================
 # Merge main weekly data
@@ -175,8 +203,9 @@ df = (
 print("Merged df columns:", df.columns.tolist())
 print("Merged row count:", len(df))
 
+
 # =========================================================
-# Add IBGE code to the weekly main data
+# Add IBGE code
 # =========================================================
 df = df.merge(
     lookup_df,
@@ -190,32 +219,49 @@ print(f"Municipios with no IBGE match: {len(missing_ibge)}")
 if len(missing_ibge) > 0:
     print(missing_ibge.tolist()[:50])
 
+print("Valenca mapping:")
+print(df[df["municipio"] == "valenca"][["municipio", "ibge_code"]].drop_duplicates())
+
+
 # =========================================================
-# Keep only fully usable rows in main data
+# Keep usable rows
 # =========================================================
-df = df.dropna(subset=["cases", "temperature", "humidity", "rainfall", "idhm", "ibge_code"]).copy()
+df = df.dropna(
+    subset=["cases", "temperature", "humidity", "rainfall", "idhm", "ibge_code"]
+).copy()
 df["ibge_code"] = df["ibge_code"].astype(int)
 
 print(f"Number of rows after dropping NaNs / missing IBGE: {len(df)}")
 
+
 # =========================================================
-# Add month from ISO year-week for joining monthly air data
+# Add month from ISO week
 # =========================================================
 df["date"], df["month"] = iso_week_to_month(df["year"], df["week"])
 df = df.dropna(subset=["month"]).copy()
 df["month"] = df["month"].astype(int)
 
+
 # =========================================================
-# Only care about municipalities in the main CSVs
+# Only care about municipios in the main CSVs
 # =========================================================
 valid_ibge = set(df["ibge_code"].unique())
 
+
 # =========================================================
-# Prepare air travel features (monthly, time-varying)
+# Prepare air travel features
 # =========================================================
 aero_df = aero_df.rename(columns={"ano": "year", "mes": "month"})
 
-for col in ["year", "month", "co_muni_ori", "co_muni_des", "aero_pass", "aero_pass_week", "aero_conec"]:
+for col in [
+    "year",
+    "month",
+    "co_muni_ori",
+    "co_muni_des",
+    "aero_pass",
+    "aero_pass_week",
+    "aero_conec",
+]:
     aero_df[col] = pd.to_numeric(aero_df[col], errors="coerce")
 
 aero_df = aero_df.dropna(subset=["year", "month", "co_muni_ori", "co_muni_des"]).copy()
@@ -224,7 +270,6 @@ aero_df["month"] = aero_df["month"].astype(int)
 aero_df["co_muni_ori"] = aero_df["co_muni_ori"].astype(int)
 aero_df["co_muni_des"] = aero_df["co_muni_des"].astype(int)
 
-# outgoing features
 aero_out = (
     aero_df.groupby(["co_muni_ori", "year", "month"], as_index=False)
     .agg({
@@ -242,7 +287,6 @@ aero_out = (
     })
 )
 
-# incoming features
 aero_in = (
     aero_df.groupby(["co_muni_des", "year", "month"], as_index=False)
     .agg({
@@ -268,10 +312,18 @@ aero_features = aero_out.merge(
 
 aero_features = aero_features[aero_features["ibge_code"].isin(valid_ibge)].copy()
 
+
 # =========================================================
-# Prepare road/fluvial features (static)
+# Prepare road/fluvial features
 # =========================================================
-for col in ["co_muni_ori", "co_muni_des", "fluv_conec", "road_conec", "tot_conec", "irregular_conec"]:
+for col in [
+    "co_muni_ori",
+    "co_muni_des",
+    "fluv_conec",
+    "road_conec",
+    "tot_conec",
+    "irregular_conec",
+]:
     fluvi_df[col] = pd.to_numeric(fluvi_df[col], errors="coerce")
 
 fluvi_df = fluvi_df.dropna(subset=["co_muni_ori", "co_muni_des"]).copy()
@@ -324,8 +376,9 @@ fluvi_features = fluvi_out.merge(
 
 fluvi_features = fluvi_features[fluvi_features["ibge_code"].isin(valid_ibge)].copy()
 
+
 # =========================================================
-# Merge spatial features onto main weekly data
+# Merge spatial features
 # =========================================================
 df = (
     df
@@ -346,6 +399,7 @@ for col in spatial_cols:
 
 print("Final modeling row count:", len(df))
 
+
 # =========================================================
 # Encode municipios
 # =========================================================
@@ -353,30 +407,23 @@ df["municipio_idx"], municipios = pd.factorize(df["municipio"], sort=True)
 n_groups = df["municipio_idx"].nunique()
 print(f"Number of municipios: {n_groups}")
 
-# =========================================================
-# Choose a smaller, stable covariate set first
-# =========================================================
-covariates = [
-    "temperature",
-    "humidity",
-    "rainfall",
-    "idhm",
-    "air_pass_in",
-    "road_conec_in",
-    "fluv_conec_in",
-]
 
-# make sure all covariates exist
+# =========================================================
+# Covariates
+# =========================================================
+covariates = FULL_COVARIATES if USE_FULL_COVARIATE_SET else BASE_COVARIATES
+print("Using covariates:", covariates)
+
 missing_covs = [c for c in covariates if c not in df.columns]
 if missing_covs:
     raise ValueError(f"Missing covariates in dataframe: {missing_covs}")
 
-# standardize covariates
 scaler = StandardScaler()
 df[covariates] = scaler.fit_transform(df[covariates])
 
+
 # =========================================================
-# Observed data arrays
+# Arrays
 # =========================================================
 y = df["cases"].to_numpy(dtype=np.int64)
 group_idx = df["municipio_idx"].to_numpy(dtype=np.int32)
@@ -385,11 +432,9 @@ X = df[covariates].to_numpy(dtype=np.float64)
 print("Mean of cases:", float(df["cases"].mean()))
 print("Variance of cases:", float(df["cases"].var()))
 
+
 # =========================================================
-# Faster + more stable Bayesian model
-# - non-centered hierarchical intercepts
-# - negative binomial instead of poisson
-# - fewer draws/chains
+# Model
 # =========================================================
 coords = {
     "municipio": municipios,
@@ -398,59 +443,74 @@ coords = {
 }
 
 with pm.Model(coords=coords) as model:
-    # data containers
     X_data = pm.Data("X_data", X, dims=("obs_id", "covariate"))
     group_data = pm.Data("group_data", group_idx, dims="obs_id")
 
-    # non-centered hierarchical intercepts
-    alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=1.0)
-    sigma_group = pm.HalfNormal("sigma_group", sigma=0.7)
-    z_group = pm.Normal("z_group", mu=0.0, sigma=1.0, dims="municipio")
+    alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=0.7)
+    sigma_group = pm.HalfNormal("sigma_group", sigma=0.2)
+
+    z_group_raw = pm.Normal("z_group_raw", mu=0.0, sigma=1.0, dims="municipio")
+    z_group = pm.Deterministic(
+        "z_group",
+        z_group_raw - pm.math.mean(z_group_raw),
+        dims="municipio",
+    )
+
     alpha_group = pm.Deterministic(
         "alpha_group",
         alpha_global + sigma_group * z_group,
         dims="municipio",
     )
 
-    # regression coefficients
-    beta = pm.Normal("beta", mu=0.0, sigma=0.3, dims="covariate")
+    beta = pm.Normal("beta", mu=0.0, sigma=0.25, dims="covariate")
 
-    # linear predictor
     eta = alpha_group[group_data] + pm.math.dot(X_data, beta)
-
-    # mean
     mu = pm.math.exp(eta)
 
-    # overdispersion parameter
     alpha_nb = pm.Exponential("alpha_nb", lam=1.0)
 
-    # likelihood
     pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha_nb, observed=y, dims="obs_id")
 
     trace = pm.sample(
-        draws=1500,
-        tune=3000,
-        chains=4,
-        cores=4,
-        target_accept=0.97,
+        draws=1000,
+        tune=2000,
+        chains=2,
+        cores=2,
+        target_accept=0.95,
         init="adapt_diag",
         random_seed=42,
         return_inferencedata=True,
         progressbar=True,
     )
 
+
 # =========================================================
-# Posterior summaries
+# Diagnostics
 # =========================================================
-summary_vars = ["alpha_global", "sigma_group", "alpha_nb", "beta"]
-summary = az.summary(trace, var_names=summary_vars, round_to=4)
-print(summary)
-summary = az.summary(trace, round_to=4)
-print(az.summary(trace, round_to=4).sort_values("r_hat", ascending=False).head(20))
-print(az.summary(trace, round_to=4).sort_values("ess_bulk").head(20))
+summary_main = az.summary(
+    trace,
+    var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"],
+    round_to=4,
+)
+print(summary_main)
+
+summary_all = az.summary(trace, round_to=4)
+
+print("\nTop 20 highest r_hat:")
+print(summary_all.sort_values("r_hat", ascending=False).head(20))
+
+print("\nTop 20 lowest ess_bulk:")
+print(summary_all.sort_values("ess_bulk").head(20))
+
+print("\nRhat dataset:")
 print(az.rhat(trace))
+
+print("\nBulk ESS dataset:")
 print(az.ess(trace, method="bulk"))
+
+print("\nTail ESS dataset:")
 print(az.ess(trace, method="tail"))
-# Optional plots
-az.plot_trace(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
-az.plot_posterior(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
+
+if MAKE_PLOTS:
+    az.plot_trace(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
+    az.plot_posterior(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
