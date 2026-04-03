@@ -8,6 +8,8 @@ import pandas as pd
 import pymc as pm
 import arviz as az
 
+import matplotlib.pyplot as plt
+
 from sklearn.preprocessing import StandardScaler
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -61,12 +63,9 @@ MAKE_PLOTS = True
 # Start with smaller covariate set for better convergence
 BASE_COVARIATES = [
     "rainfall",
-    "humidity", 
-    "idhm",
+    "humidity",
     "air_pass_in",
-    "road_conec_in",
-    "fluv_conec_in",
-
+    "idhm",
 ]
 
 FULL_COVARIATES = [
@@ -124,10 +123,11 @@ for d in [cases_df, temp_df, hum_df, rain_df, idhm_df]:
 municipios_df["state_code"] = municipios_df["city"].astype(str).str.extract(r"/([A-Z]{2})$")
 municipios_df["city_clean"] = municipios_df["city"].apply(normalize_municipio_name)
 municipios_df["ibgeid"] = pd.to_numeric(municipios_df["ibgeid"], errors="coerce").astype("Int64")
-
 # Restrict to RJ only
-municipios_df = municipios_df[municipios_df["state_code"] == "RJ"].copy()
-
+municipios_df = municipios_df[
+    (municipios_df["state_code"] == "RJ") 
+].copy()
+print(municipios_df.head())
 lookup_df = (
     municipios_df[["city_clean", "ibgeid"]]
     .dropna()
@@ -449,11 +449,15 @@ coords = {
 with pm.Model(coords=coords) as model:
     # Data for covariates and group IDs
     X_data = pm.Data("X_data", X, dims=("obs_id", "covariate"))
+    X_data.set_value(df[covariates])
     group_data = pm.Data("group_data", group_idx, dims="obs_id")
+    import pymc as pm
+
+with model:
 
     # Global and group-specific intercepts
     alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=0.7)
-    sigma_group = pm.HalfNormal("sigma_group", sigma=0.2)
+    sigma_group = pm.HalfNormal("sigma_group", sigma=1)
 
     z_group_raw = pm.Normal("z_group_raw", mu=0.0, sigma=1.0, dims="municipio")
     z_group = pm.Deterministic(
@@ -469,7 +473,7 @@ with pm.Model(coords=coords) as model:
     )
 
     # Coefficients for covariates
-    beta = pm.Normal("beta", mu=0.0, sigma=0.25, dims="covariate")
+    beta = pm.Normal("beta", mu=0.0, sigma=1.5, dims="covariate")
 
     # Linear predictor (eta)
     eta = alpha_group[group_data] + pm.math.dot(X_data, beta)
@@ -497,9 +501,14 @@ with pm.Model(coords=coords) as model:
         progressbar=True,
         idata_kwargs={"log_likelihood": True},
     )
+    posterior_predictive = pm.sample_posterior_predictive(
+        trace,
+        var_names=["y_obs"], 
+        random_seed=42
+    )
+
 
     # Add log-likelihood to posterior for WAIC/BIC
-    
 # =========================================================
 # Diagnostics
 # =========================================================
@@ -592,6 +601,65 @@ print(az.ess(trace, method="bulk"))
 print("\nTail ESS dataset:")
 print(az.ess(trace, method="tail"))
 
+# Delta ELPD
+delta_elpd = loo_result.elpd_loo
+print(f"ΔELPD (humidity): {delta_elpd:.2f}")
+beta_means = summary_main["mean"]
+
+percent_effect = np.exp(beta_means) - 1
+
+for i, val in enumerate(percent_effect):
+    print(f"Variable {i}: {val*100:.2f}% change in cases")
+
+# -------------------------
+# 1️⃣ Posterior coefficients
+# -------------------------
+posterior_means = trace.posterior["beta"].mean(dim=["chain", "draw"]).values
+posterior_stds = trace.posterior["beta"].std(dim=["chain", "draw"]).values
+num_vars = len(posterior_means)
+ppc_mean = posterior_predictive.posterior_predictive["y_obs"].mean(dim=["chain", "draw"]).values.flatten()
+ppc_std  = posterior_predictive.posterior_predictive["y_obs"].std(dim=["chain", "draw"]).values.flatten()
+plt.figure(figsize=(14, 6))
+
+# Subplot 1: Posterior coefficients
+plt.subplot(1, 2, 1)
+plt.errorbar(range(num_vars), posterior_means, yerr=posterior_stds, fmt='o', capsize=5)
+plt.xticks(range(num_vars), [f"Var {i}" for i in range(num_vars)], rotation=45)
+plt.axhline(0, color='red', linestyle='--', label='No effect')
+plt.xlabel("Covariates")
+plt.ylabel("Posterior mean coefficient ± SD")
+plt.title("Posterior Coefficients of Covariates")
+plt.legend()
+
+# -------------------------
+# 2️⃣ Predicted vs Actual
+# -------------------------
+y_actual = y  # your observed data
+
+plt.subplot(1, 2, 2)
+plt.errorbar(y_actual, ppc_mean, yerr=ppc_std, fmt='o', alpha=0.3, capsize=2)
+plt.plot([y_actual.min(), y_actual.max()], [y_actual.min(), y_actual.max()], 'r--', label="y = y_pred")
+plt.xlabel("Actual cases")
+plt.ylabel("Predicted cases")
+plt.title("Predicted vs Actual Cases")
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+
+# Posterior mean of group intercepts
+alpha_group_mean = trace.posterior["alpha_group"].mean(dim=["chain", "draw"]).values  # shape: (num_groups,)
+
+# Posterior mean contribution of covariates
+beta_mean = trace.posterior["beta"].mean(dim=["chain", "draw"]).values
+X_array = X_data.get_value()
+eta_covariate = X_array @ beta_mean
+
+# Print ranges to compare
+print("Alpha_group range:", alpha_group_mean.min(), "to", alpha_group_mean.max())
+print("Covariate contribution (X_data @ beta) range:", eta_covariate.min(), "to", eta_covariate.max())
+print("Mean alpha_group:", alpha_group_mean.mean())
+print("Mean covariate contribution:", eta_covariate.mean())
 
 
 if MAKE_PLOTS:
