@@ -60,22 +60,24 @@ MAKE_PLOTS = True
 
 # Start with smaller covariate set for better convergence
 BASE_COVARIATES = [
-    "temperature", 
     "rainfall",
+    "humidity", 
     "idhm",
+    "air_pass_in",
     "road_conec_in",
+    "fluv_conec_in",
+
 ]
 
 FULL_COVARIATES = [
-    "temperature",
-    "humidity",
     "rainfall",
+    "humidity",
+    "temperature",
     "idhm",
     "air_pass_in",
     "road_conec_in",
     "fluv_conec_in",
 ]
-
 
 # =========================================================
 # File paths
@@ -412,6 +414,8 @@ print(f"Number of municipios: {n_groups}")
 # Covariates
 # =========================================================
 covariates = FULL_COVARIATES if USE_FULL_COVARIATE_SET else BASE_COVARIATES
+correlation_matrix = df[covariates].corr()
+print(correlation_matrix)
 print("Using covariates:", covariates)
 
 missing_covs = [c for c in covariates if c not in df.columns]
@@ -443,9 +447,11 @@ coords = {
 }
 
 with pm.Model(coords=coords) as model:
+    # Data for covariates and group IDs
     X_data = pm.Data("X_data", X, dims=("obs_id", "covariate"))
     group_data = pm.Data("group_data", group_idx, dims="obs_id")
 
+    # Global and group-specific intercepts
     alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=0.7)
     sigma_group = pm.HalfNormal("sigma_group", sigma=0.2)
 
@@ -462,15 +468,23 @@ with pm.Model(coords=coords) as model:
         dims="municipio",
     )
 
+    # Coefficients for covariates
     beta = pm.Normal("beta", mu=0.0, sigma=0.25, dims="covariate")
 
+    # Linear predictor (eta)
     eta = alpha_group[group_data] + pm.math.dot(X_data, beta)
     mu = pm.math.exp(eta)
 
+    # Over-dispersion parameter for Negative Binomial
     alpha_nb = pm.Exponential("alpha_nb", lam=1.0)
 
-    pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha_nb, observed=y, dims="obs_id")
+    # Observed data (Negative Binomial likelihood)
+    y_obs = pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha_nb, observed=y, dims="obs_id")
 
+    # Compute log-likelihood for Negative Binomial
+
+
+    # Add log-likelihood to the trace
     trace = pm.sample(
         draws=1000,
         tune=2000,
@@ -481,9 +495,11 @@ with pm.Model(coords=coords) as model:
         random_seed=42,
         return_inferencedata=True,
         progressbar=True,
+        idata_kwargs={"log_likelihood": True},
     )
 
-
+    # Add log-likelihood to posterior for WAIC/BIC
+    
 # =========================================================
 # Diagnostics
 # =========================================================
@@ -495,6 +511,71 @@ summary_main = az.summary(
 print(summary_main)
 
 summary_all = az.summary(trace, round_to=4)
+
+# Assign weight to each parameter based on its importance
+# Function to calculate weighted averages
+def weighted_average(values, weights):
+    """Calculate the weighted average for a list of values."""
+    return np.average(values, weights=weights)
+
+# Get the Rhat values for each parameter
+rhat = az.rhat(trace)
+
+# Get ESS values (bulk and tail)
+ess_bulk = az.ess(trace, method="bulk")
+ess_tail = az.ess(trace, method="tail")
+
+# Calculate the weighted averages for Rhat, ESS bulk, and ESS tail
+rhat_values = [rhat["beta"].mean(), rhat["alpha_group"].mean(), rhat["sigma_group"].mean(), rhat["z_group"].mean()]
+ess_bulk_values = [ess_bulk["beta"].mean(), ess_bulk["alpha_group"].mean(), ess_bulk["sigma_group"].mean(), ess_bulk["z_group"].mean()]
+ess_tail_values = [ess_tail["beta"].mean(), ess_tail["alpha_group"].mean(), ess_tail["sigma_group"].mean(), ess_tail["z_group"].mean()]
+
+# Define the weights for each parameter
+weights = {
+    "beta": 2,          # Covariates (temperature, rainfall, idhm, etc.)
+    "alpha_group": 1,   # Global intercept (base level disease count)
+    "sigma_group": 1,   # Variance of municipio intercepts
+    "z_group": 3,       # Municipio-specific intercepts (most important)
+}
+
+# Compute weighted averages
+weighted_rhat = weighted_average(rhat_values, weights=list(weights.values()))
+weighted_ess_bulk = weighted_average(ess_bulk_values, weights=list(weights.values()))
+weighted_ess_tail = weighted_average(ess_tail_values, weights=list(weights.values()))
+
+# Print the results
+print(f"Weighted Rhat: {weighted_rhat}")
+print(f"Weighted ESS Bulk: {weighted_ess_bulk}")
+print(f"Weighted ESS Tail: {weighted_ess_tail}")
+import arviz as az
+import numpy as np
+
+# =============================
+# WAIC and LOO
+# =============================
+
+# Compute WAIC
+waic_result = az.waic(trace)
+print("WAIC Result:")
+print(waic_result)
+print(f"WAIC (elpd_waic): {waic_result.elpd_waic:.2f}, p_WAIC (effective params): {waic_result.p_waic:.2f}")
+
+# Compute LOO
+loo_result = az.loo(trace)
+print("\nLOO Result:")
+print(loo_result)
+print(f"LOO (elpd_loo): {loo_result.elpd_loo:.2f}, p_LOO (effective params): {loo_result.p_loo:.2f}")
+# Extract Pareto k values
+k_vals = loo_result.pareto_k
+
+# Find "problematic" points (k > 0.7)
+high_k_idx = np.where(k_vals > 0.7)[0]
+print(f"Number of high k points: {len(high_k_idx)}")
+print("Indices of high k points:", high_k_idx)
+print("k values for these points:", k_vals[high_k_idx])
+
+# Optional: compare WAIC and LOO across multiple models later
+# lower elpd_waic or elpd_loo indicates worse predictive fit
 
 print("\nTop 20 highest r_hat:")
 print(summary_all.sort_values("r_hat", ascending=False).head(20))
@@ -510,6 +591,8 @@ print(az.ess(trace, method="bulk"))
 
 print("\nTail ESS dataset:")
 print(az.ess(trace, method="tail"))
+
+
 
 if MAKE_PLOTS:
     az.plot_trace(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
