@@ -244,14 +244,12 @@ def build_base_dataframe() -> pd.DataFrame:
    rain_df = restrict_years(rain_df)
    idhm_df = restrict_years(idhm_df)
 
-
    print("Core years after restriction:")
    print("cases:", sorted(cases_df["year"].dropna().astype(int).unique().tolist()))
    print("temp:", sorted(temp_df["year"].dropna().astype(int).unique().tolist()))
    print("humidity:", sorted(hum_df["year"].dropna().astype(int).unique().tolist()))
    print("rain:", sorted(rain_df["year"].dropna().astype(int).unique().tolist()))
    print("idhm:", sorted(idhm_df["year"].dropna().astype(int).unique().tolist()))
-
 
    # -----------------------------------------------------
    # Aggregate BEFORE merging
@@ -261,30 +259,25 @@ def build_base_dataframe() -> pd.DataFrame:
        .agg({"cases": "sum"})
    )
 
-
    temp_df = (
        temp_df.groupby(["municipio", "year", "week"], as_index=False)
        .agg({"temperature": "mean"})
    )
-
 
    hum_df = (
        hum_df.groupby(["municipio", "year", "week"], as_index=False)
        .agg({"humidity": "mean"})
    )
 
-
    rain_df = (
        rain_df.groupby(["municipio", "year", "week"], as_index=False)
        .agg({"rainfall": "mean"})
    )
 
-
    idhm_df = (
        idhm_df.groupby(["municipio", "year", "week"], as_index=False)
        .agg({"idhm": "mean"})
    )
-
 
    # -----------------------------------------------------
    # Merge weekly core data
