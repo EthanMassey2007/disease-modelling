@@ -292,7 +292,6 @@ def build_base_dataframe() -> pd.DataFrame:
 
    print("Merged weekly row count:", len(df))
 
-
    # -----------------------------------------------------
    # Add IBGE code
    # -----------------------------------------------------
@@ -303,12 +302,10 @@ def build_base_dataframe() -> pd.DataFrame:
        validate="many_to_one",
    )
 
-
    missing_ibge = df[df["ibge_code"].isna()]["municipio"].drop_duplicates().sort_values()
    print("Municipios with no IBGE match:", len(missing_ibge))
    if len(missing_ibge) > 0:
        print(missing_ibge.tolist()[:50])
-
 
    df = df.dropna(
        subset=["cases", "temperature", "humidity", "rainfall", "idhm", "ibge_code"]
