@@ -579,27 +579,10 @@ k_vals = loo_result.pareto_k
 
 # Find "problematic" points (k > 0.7)
 high_k_idx = np.where(k_vals > 0.7)[0]
-print(f"Number of high k points: {len(high_k_idx)}")
-print("Indices of high k points:", high_k_idx)
-print("k values for these points:", k_vals[high_k_idx])
 
 # Optional: compare WAIC and LOO across multiple models later
 # lower elpd_waic or elpd_loo indicates worse predictive fit
 
-print("\nTop 20 highest r_hat:")
-print(summary_all.sort_values("r_hat", ascending=False).head(20))
-
-print("\nTop 20 lowest ess_bulk:")
-print(summary_all.sort_values("ess_bulk").head(20))
-
-print("\nRhat dataset:")
-print(az.rhat(trace))
-
-print("\nBulk ESS dataset:")
-print(az.ess(trace, method="bulk"))
-
-print("\nTail ESS dataset:")
-print(az.ess(trace, method="tail"))
 
 # Delta ELPD
 delta_elpd = loo_result.elpd_loo
