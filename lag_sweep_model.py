@@ -235,7 +235,6 @@ def build_base_dataframe() -> pd.DataFrame:
    rain_df["rainfall"] = pd.to_numeric(rain_df["rainfall"], errors="coerce")
    idhm_df["idhm"] = pd.to_numeric(idhm_df["idhm"], errors="coerce")
 
-
    # -----------------------------------------------------
    # Restrict weekly core datasets to 2017-2022
    # -----------------------------------------------------
