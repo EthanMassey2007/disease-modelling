@@ -64,8 +64,11 @@ MAKE_PLOTS = True
 BASE_COVARIATES = [
     "rainfall",
     "humidity",
-    "air_pass_in",
+    "temperature",
     "idhm",
+    "air_pass_in",
+    "road_conec_in",
+    "fluv_conec_in",
 ]
 
 FULL_COVARIATES = [
