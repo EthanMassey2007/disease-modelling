@@ -176,9 +176,6 @@ def restrict_years(d: pd.DataFrame) -> pd.DataFrame:
    d = d[(d["year"] >= START_YEAR) & (d["year"] <= END_YEAR)].copy()
    return d
 
-
-
-
 def build_base_dataframe() -> pd.DataFrame:
    # -----------------------------------------------------
    # Load data
@@ -189,18 +186,15 @@ def build_base_dataframe() -> pd.DataFrame:
    rain_df = clean_columns(pd.read_csv(rainfall_file))
    idhm_df = clean_columns(pd.read_csv(idhm_file))
 
-
    municipios_df = clean_columns(pd.read_csv(municipios_file))
    aero_df = clean_columns(pd.read_parquet(aero_file))
    fluvi_df = clean_columns(pd.read_parquet(fluvi_file))
-
 
    # -----------------------------------------------------
    # Normalize municipio names
    # -----------------------------------------------------
    for d in [cases_df, temp_df, hum_df, rain_df, idhm_df]:
        d["municipio"] = d["municipio"].apply(normalize_municipio_name)
-
 
    # -----------------------------------------------------
    # Build RJ-only city -> IBGE lookup
@@ -212,9 +206,7 @@ def build_base_dataframe() -> pd.DataFrame:
    municipios_df["city_clean"] = municipios_df["city"].apply(normalize_municipio_name)
    municipios_df["ibgeid"] = pd.to_numeric(municipios_df["ibgeid"], errors="coerce").astype("Int64")
 
-
    municipios_df = municipios_df[municipios_df["state_code"] == TARGET_STATE].copy()
-
 
    lookup_df = (
        municipios_df[["city_clean", "ibgeid"]]
@@ -223,15 +215,12 @@ def build_base_dataframe() -> pd.DataFrame:
        .rename(columns={"city_clean": "municipio", "ibgeid": "ibge_code"})
    )
 
-
    dup_counts = lookup_df.groupby("municipio")["ibge_code"].nunique()
    ambiguous_after_filter = dup_counts[dup_counts > 1]
-
 
    print("RJ municipios in lookup:", len(lookup_df))
    print("Ambiguous names after state filter:")
    print(ambiguous_after_filter)
-
 
    # -----------------------------------------------------
    # Numeric conversion
@@ -239,7 +228,6 @@ def build_base_dataframe() -> pd.DataFrame:
    for d in [cases_df, temp_df, hum_df, rain_df, idhm_df]:
        d["year"] = pd.to_numeric(d["year"], errors="coerce").astype("Int64")
        d["week"] = pd.to_numeric(d["week"], errors="coerce").astype("Int64")
-
 
    cases_df["cases"] = pd.to_numeric(cases_df["cases"], errors="coerce")
    temp_df["temperature"] = pd.to_numeric(temp_df["temperature"], errors="coerce")
