@@ -558,7 +558,6 @@ weighted_ess_tail = weighted_average(ess_tail_values, weights=list(weights.value
 # Print the results
 print(f"Weighted Rhat: {weighted_rhat}")
 print(f"Weighted ESS Bulk: {weighted_ess_bulk}")
-print(f"Weighted ESS Tail: {weighted_ess_tail}")
 import arviz as az
 import numpy as np
 
