@@ -57,7 +57,7 @@ def iso_week_to_month(year_series, week_series):
 # =========================================================
 # Config
 # =========================================================
-USE_FULL_COVARIATE_SET = False
+USE_FULL_COVARIATE_SET = True
 MAKE_PLOTS = True
 
 # Start with smaller covariate set for better convergence
@@ -128,7 +128,7 @@ municipios_df["city_clean"] = municipios_df["city"].apply(normalize_municipio_na
 municipios_df["ibgeid"] = pd.to_numeric(municipios_df["ibgeid"], errors="coerce").astype("Int64")
 # Restrict to RJ only
 municipios_df = municipios_df[
-    (municipios_df["state_code"] == "RJ") 
+    (municipios_df["city"] == "Rio de Janeiro/RJ") 
 ].copy()
 print(municipios_df.head())
 lookup_df = (
@@ -459,7 +459,7 @@ with pm.Model(coords=coords) as model:
 with model:
 
     # Global and group-specific intercepts
-    alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=0.7)
+    alpha_global = pm.Normal("alpha_global", mu=0.0, sigma=.7)
     sigma_group = pm.HalfNormal("sigma_group", sigma=1)
 
     z_group_raw = pm.Normal("z_group_raw", mu=0.0, sigma=1.0, dims="municipio")
@@ -493,8 +493,8 @@ with model:
 
     # Add log-likelihood to the trace
     trace = pm.sample(
-        draws=1000,
-        tune=2000,
+        draws=500,
+        tune=1000,
         chains=2,
         cores=2,
         target_accept=0.95,
@@ -558,6 +558,7 @@ weighted_ess_tail = weighted_average(ess_tail_values, weights=list(weights.value
 # Print the results
 print(f"Weighted Rhat: {weighted_rhat}")
 print(f"Weighted ESS Bulk: {weighted_ess_bulk}")
+print(f"Weighted ESS Tail: {weighted_ess_tail}")
 import arviz as az
 import numpy as np
 
