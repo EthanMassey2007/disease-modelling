@@ -90,6 +90,11 @@ END_YEAR = 2022
 MAKE_PLOTS = True
 APPLY_LOG1P_TO_SKEWED_FEATURES = True
 
+# Change this one variable to control lag duration
+CASE_LAG_WEEKS = 2
+LAG_CASES_COL = f"cases_lag{CASE_LAG_WEEKS}"
+LAG_LOG_COL = f"log_cases_lag{CASE_LAG_WEEKS}"
+
 SKEWED_FEATURES = [
     "air_pass_in",
     "road_conec_in",
@@ -102,7 +107,7 @@ BASE_COVARIATES = [
     "temperature",
     "idhm",
     "air_pass_in",
-    "log_cases_lag1",
+    LAG_LOG_COL,
 ]
 
 FULL_COVARIATES = [
@@ -113,7 +118,7 @@ FULL_COVARIATES = [
     "air_pass_in",
     "road_conec_in",
     "fluv_conec_in",
-    "log_cases_lag1",
+    LAG_LOG_COL,
 ]
 
 USE_FULL_COVARIATE_SET = True
@@ -465,11 +470,12 @@ print("Row count after spatial merges:", len(df))
 # =========================================================
 df = df.sort_values(["municipio", "date"]).copy()
 
-df["cases_lag1"] = df.groupby("municipio")["cases"].shift(1)
-df["log_cases_lag1"] = np.log1p(df["cases_lag1"])
+df[LAG_CASES_COL] = df.groupby("municipio")["cases"].shift(CASE_LAG_WEEKS)
+df[LAG_LOG_COL] = np.log1p(df[LAG_CASES_COL])
 
-df = df.dropna(subset=["cases_lag1"]).copy()
+df = df.dropna(subset=[LAG_CASES_COL]).copy()
 
+print(f"Using case lag of {CASE_LAG_WEEKS} week(s)")
 print("Row count after lag creation:", len(df))
 
 
@@ -546,7 +552,7 @@ coords = {
     "obs_id": np.arange(len(df)),
 }
 
-lag_col_idx = covariates.index("log_cases_lag1")
+lag_col_idx = covariates.index(LAG_LOG_COL)
 
 with pm.Model(coords=coords) as model:
     X_data = pm.Data("X_data", X, dims=("obs_id", "covariate"))
@@ -620,8 +626,8 @@ with pm.Model(coords=coords) as model:
     )
 
     trace = pm.sample(
-        draws=400,
-        tune=600,
+        draws=200,
+        tune=400,
         chains=4,
         cores=4,
         target_accept=0.98,
