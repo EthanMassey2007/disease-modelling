@@ -28,21 +28,16 @@ def normalize_municipio_name(name):
         return np.nan
 
     name = str(name).strip().lower()
-
-    # Remove trailing /UF, e.g. "São Paulo/SP" -> "São Paulo"
     name = re.sub(r"/[a-z]{2}$", "", name)
 
-    # Remove accents
     name = unicodedata.normalize("NFKD", name)
     name = "".join(c for c in name if not unicodedata.combining(c))
 
-    # Normalize whitespace
     name = re.sub(r"\s+", " ", name).strip()
-
     return name
 
 
-def iso_week_to_month(year_series, week_series):
+def iso_week_to_date(year_series, week_series):
     dt = pd.to_datetime(
         year_series.astype(str)
         + "-W"
@@ -51,7 +46,7 @@ def iso_week_to_month(year_series, week_series):
         format="%G-W%V-%u",
         errors="coerce",
     )
-    return dt, dt.dt.month
+    return dt
 
 
 def weighted_average(values, weights):
@@ -72,12 +67,19 @@ END_YEAR = 2022
 MAKE_PLOTS = True
 APPLY_LOG1P_TO_SKEWED_FEATURES = True
 
+SKEWED_FEATURES = [
+    "air_pass_in",
+    "road_conec_in",
+    "fluv_conec_in",
+]
+
 BASE_COVARIATES = [
     "rainfall",
     "humidity",
     "temperature",
     "idhm",
     "air_pass_in",
+    "log_cases_lag1",
 ]
 
 FULL_COVARIATES = [
@@ -88,15 +90,10 @@ FULL_COVARIATES = [
     "air_pass_in",
     "road_conec_in",
     "fluv_conec_in",
+    "log_cases_lag1",
 ]
 
 USE_FULL_COVARIATE_SET = True
-
-SKEWED_FEATURES = [
-    "air_pass_in",
-    "road_conec_in",
-    "fluv_conec_in",
-]
 
 
 # =========================================================
@@ -131,15 +128,14 @@ fluvi_df = clean_columns(pd.read_parquet(fluvi_file))
 
 
 # =========================================================
-# Normalize municipio names in the main weekly CSVs
+# Normalize municipio names
 # =========================================================
 for d in [cases_df, temp_df, hum_df, rain_df, idhm_df]:
     d["municipio"] = d["municipio"].apply(normalize_municipio_name)
 
 
 # =========================================================
-# Build RJ-only city -> IBGE lookup from municipios.csv
-# FIX: filter by state code, not by exact city name
+# Build RJ-only city -> IBGE lookup
 # =========================================================
 municipios_df["state_code"] = municipios_df["city"].astype(str).str.extract(
     r"/([A-Z]{2})$",
@@ -157,12 +153,7 @@ lookup_df = (
     .rename(columns={"city_clean": "municipio", "ibgeid": "ibge_code"})
 )
 
-dup_counts = lookup_df.groupby("municipio")["ibge_code"].nunique()
-ambiguous_after_filter = dup_counts[dup_counts > 1]
-
 print("RJ municipios in lookup:", len(lookup_df))
-print("Ambiguous names after state filter:")
-print(ambiguous_after_filter)
 
 
 # =========================================================
@@ -182,28 +173,18 @@ idhm_df["idhm"] = pd.to_numeric(idhm_df["idhm"], errors="coerce")
 # =========================================================
 # Restrict weekly core datasets to 2017-2022
 # =========================================================
-for name, d in [
-    ("cases", cases_df),
-    ("temp", temp_df),
-    ("humidity", hum_df),
-    ("rain", rain_df),
-    ("idhm", idhm_df),
-]:
-    d.dropna(subset=["year", "week"], inplace=True)
+def restrict_years(d):
+    d = d.dropna(subset=["year", "week"]).copy()
     d = d[(d["year"] >= START_YEAR) & (d["year"] <= END_YEAR)].copy()
+    return d
 
-    if name == "cases":
-        cases_df = d
-    elif name == "temp":
-        temp_df = d
-    elif name == "humidity":
-        hum_df = d
-    elif name == "rain":
-        rain_df = d
-    elif name == "idhm":
-        idhm_df = d
+cases_df = restrict_years(cases_df)
+temp_df = restrict_years(temp_df)
+hum_df = restrict_years(hum_df)
+rain_df = restrict_years(rain_df)
+idhm_df = restrict_years(idhm_df)
 
-print("Core data year coverage after restriction:")
+print("Core years after restriction:")
 print("cases:", sorted(cases_df["year"].dropna().astype(int).unique().tolist()))
 print("temp:", sorted(temp_df["year"].dropna().astype(int).unique().tolist()))
 print("humidity:", sorted(hum_df["year"].dropna().astype(int).unique().tolist()))
@@ -212,7 +193,7 @@ print("idhm:", sorted(idhm_df["year"].dropna().astype(int).unique().tolist()))
 
 
 # =========================================================
-# Aggregate each input BEFORE merging
+# Aggregate BEFORE merging
 # =========================================================
 cases_df = (
     cases_df.groupby(["municipio", "year", "week"], as_index=False)
@@ -251,7 +232,6 @@ df = (
     .merge(idhm_df, on=["municipio", "year", "week"], how="left", validate="one_to_one")
 )
 
-print("Merged weekly df columns:", df.columns.tolist())
 print("Merged weekly row count:", len(df))
 
 
@@ -266,7 +246,7 @@ df = df.merge(
 )
 
 missing_ibge = df[df["ibge_code"].isna()]["municipio"].drop_duplicates().sort_values()
-print(f"Municipios with no IBGE match: {len(missing_ibge)}")
+print("Municipios with no IBGE match:", len(missing_ibge))
 if len(missing_ibge) > 0:
     print(missing_ibge.tolist()[:50])
 
@@ -276,27 +256,25 @@ df = df.dropna(
 
 df["ibge_code"] = df["ibge_code"].astype(int)
 
-print("Rows after dropping missing weekly core data / IBGE:", len(df))
+
+# =========================================================
+# Add date + month
+# =========================================================
+df["date"] = iso_week_to_date(df["year"], df["week"])
+df = df.dropna(subset=["date"]).copy()
+df["month"] = df["date"].dt.month.astype(int)
+
+print("Weekly years used:", sorted(df["year"].dropna().astype(int).unique().tolist()))
 
 
 # =========================================================
-# Add month from ISO week
-# =========================================================
-df["date"], df["month"] = iso_week_to_month(df["year"], df["week"])
-df = df.dropna(subset=["month"]).copy()
-df["month"] = df["month"].astype(int)
-
-print("Final weekly years present:", sorted(df["year"].dropna().astype(int).unique().tolist()))
-
-
-# =========================================================
-# Keep only IBGE codes that survive in core weekly data
+# Valid IBGE codes from weekly data
 # =========================================================
 valid_ibge = set(df["ibge_code"].unique())
 
 
 # =========================================================
-# Prepare air travel features (time-varying, 2017-2022)
+# Prepare air travel features (time-varying)
 # =========================================================
 aero_df = aero_df.rename(columns={"ano": "year", "mes": "month"})
 
@@ -321,7 +299,7 @@ aero_df = aero_df[
     (aero_df["year"] >= START_YEAR) & (aero_df["year"] <= END_YEAR)
 ].copy()
 
-print("Air data years after restriction:", sorted(aero_df["year"].unique().tolist()))
+print("Air years used:", sorted(aero_df["year"].unique().tolist()))
 
 aero_out = (
     aero_df.groupby(["co_muni_ori", "year", "month"], as_index=False)
@@ -367,8 +345,7 @@ aero_features = aero_features[aero_features["ibge_code"].isin(valid_ibge)].copy(
 
 
 # =========================================================
-# Prepare road/fluvial features (STATIC municipio-level features)
-# These are NOT merged by year. They are treated as structural connectivity.
+# Prepare road/fluvial features (STATIC)
 # =========================================================
 for col in [
     "co_muni_ori",
@@ -451,34 +428,57 @@ for col in spatial_cols:
     if col in df.columns:
         df[col] = df[col].fillna(0)
 
-print("Final modeling row count:", len(df))
-print("Final year counts:")
-print(df.groupby("year").size())
+print("Row count after spatial merges:", len(df))
 
 
 # =========================================================
-# Encode municipios
+# Add lagged cases
+# =========================================================
+df = df.sort_values(["municipio", "date"]).copy()
+
+df["cases_lag1"] = df.groupby("municipio")["cases"].shift(1)
+df["log_cases_lag1"] = np.log1p(df["cases_lag1"])
+
+# Drop first observed week per municipio
+df = df.dropna(subset=["cases_lag1"]).copy()
+
+print("Row count after lag creation:", len(df))
+
+
+# =========================================================
+# Encode categorical indices
 # =========================================================
 df["municipio_idx"], municipios = pd.factorize(df["municipio"], sort=True)
-n_groups = df["municipio_idx"].nunique()
-print(f"Number of municipios: {n_groups}")
+n_groups = len(municipios)
+
+df["week_of_year"] = df["week"].astype(int)
+week_levels = sorted(df["week_of_year"].unique().tolist())
+week_to_idx = {w: i for i, w in enumerate(week_levels)}
+df["week_idx"] = df["week_of_year"].map(week_to_idx).astype(int)
+
+year_levels = sorted(df["year"].astype(int).unique().tolist())
+year_to_idx = {y: i for i, y in enumerate(year_levels)}
+df["year_idx"] = df["year"].astype(int).map(year_to_idx).astype(int)
+
+n_weeks = len(week_levels)
+n_years = len(year_levels)
+
+print("Municipios:", n_groups)
+print("Week levels:", n_weeks)
+print("Year levels:", year_levels)
 
 if n_groups < 2:
-    raise ValueError(
-        "The model has fewer than 2 municipios after preprocessing. "
-        "Check the municipio lookup / merge logic."
-    )
+    raise ValueError("Too few municipios after preprocessing.")
 
 
 # =========================================================
 # Covariates
 # =========================================================
 covariates = FULL_COVARIATES if USE_FULL_COVARIATE_SET else BASE_COVARIATES
-print("Using covariates:", covariates)
 
 missing_covs = [c for c in covariates if c not in df.columns]
 if missing_covs:
-    raise ValueError(f"Missing covariates in dataframe: {missing_covs}")
+    raise ValueError(f"Missing covariates: {missing_covs}")
 
 if APPLY_LOG1P_TO_SKEWED_FEATURES:
     for col in SKEWED_FEATURES:
@@ -497,8 +497,10 @@ df[covariates] = scaler.fit_transform(df[covariates])
 # Arrays
 # =========================================================
 y = df["cases"].to_numpy(dtype=np.int64)
-group_idx = df["municipio_idx"].to_numpy(dtype=np.int32)
 X = df[covariates].to_numpy(dtype=np.float64)
+group_idx = df["municipio_idx"].to_numpy(dtype=np.int32)
+week_idx = df["week_idx"].to_numpy(dtype=np.int32)
+year_idx = df["year_idx"].to_numpy(dtype=np.int32)
 
 print("Mean of cases:", float(df["cases"].mean()))
 print("Variance of cases:", float(df["cases"].var()))
@@ -511,21 +513,25 @@ print("Min/Max of cases:", int(df["cases"].min()), int(df["cases"].max()))
 coords = {
     "municipio": municipios,
     "covariate": covariates,
+    "week_level": np.array(week_levels),
+    "year_level": np.array(year_levels),
     "obs_id": np.arange(len(df)),
 }
 
 with pm.Model(coords=coords) as model:
     X_data = pm.Data("X_data", X, dims=("obs_id", "covariate"))
     group_data = pm.Data("group_data", group_idx, dims="obs_id")
+    week_data = pm.Data("week_data", week_idx, dims="obs_id")
+    year_data = pm.Data("year_data", year_idx, dims="obs_id")
 
-    # Hierarchical intercept
+    # Municipality intercepts
     alpha_global = pm.Normal(
         "alpha_global",
         mu=np.log(np.maximum(y.mean(), 1.0)),
-        sigma=1.5,
+        sigma=3.0,
     )
 
-    sigma_group = pm.HalfNormal("sigma_group", sigma=1.0)
+    sigma_group = pm.HalfNormal("sigma_group", sigma=3.0)
 
     z_group_raw = pm.Normal("z_group_raw", mu=0.0, sigma=1.0, dims="municipio")
     z_group = pm.Deterministic(
@@ -540,19 +546,50 @@ with pm.Model(coords=coords) as model:
         dims="municipio",
     )
 
-    # Covariate coefficients
-    beta = pm.Normal("beta", mu=0.0, sigma=1.0, dims="covariate")
+    # Week-of-year effect
+    sigma_week = pm.HalfNormal("sigma_week", sigma=1.0)
+    week_raw = pm.Normal("week_raw", mu=0.0, sigma=1.0, dims="week_level")
+    week_effect = pm.Deterministic(
+        "week_effect",
+        sigma_week * (week_raw - pm.math.mean(week_raw)),
+        dims="week_level",
+    )
 
-    # Linear predictor
-    eta = alpha_group[group_data] + pm.math.dot(X_data, beta)
+    # Year effect
+    sigma_year = pm.HalfNormal("sigma_year", sigma=1.0)
+    year_raw = pm.Normal("year_raw", mu=0.0, sigma=1.0, dims="year_level")
+    year_effect = pm.Deterministic(
+        "year_effect",
+        sigma_year * (year_raw - pm.math.mean(year_raw)),
+        dims="year_level",
+    )
+
+    # Covariate coefficients
+    beta = pm.Normal("beta", mu=0.0, sigma=1.5, dims="covariate")
+
+    eta = (
+        alpha_group[group_data]
+        + week_effect[week_data]
+        + year_effect[year_data]
+        + pm.math.dot(X_data, beta)
+    )
+
     mu = pm.Deterministic("mu", pm.math.exp(eta), dims="obs_id")
 
-    # Negative binomial overdispersion
+    # Overdispersion
     alpha_nb = pm.Exponential("alpha_nb", lam=1.0)
 
-    # Likelihood
-    pm.NegativeBinomial(
+    # Zero-inflation
+    zi_intercept = pm.Normal("zi_intercept", mu=0.0, sigma=1.5)
+    psi = pm.Deterministic(
+        "psi",
+        pm.math.sigmoid(zi_intercept),
+        dims=(),
+    )
+
+    pm.ZeroInflatedNegativeBinomial(
         "y_obs",
+        psi=psi,
         mu=mu,
         alpha=alpha_nb,
         observed=y,
@@ -564,7 +601,7 @@ with pm.Model(coords=coords) as model:
         tune=600,
         chains=4,
         cores=4,
-        target_accept=0.97,
+        target_accept=0.98,
         init="jitter+adapt_diag",
         random_seed=42,
         return_inferencedata=True,
@@ -585,13 +622,18 @@ with pm.Model(coords=coords) as model:
 # =========================================================
 summary_main = az.summary(
     trace,
-    var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"],
+    var_names=[
+        "alpha_global",
+        "sigma_group",
+        "sigma_week",
+        "sigma_year",
+        "alpha_nb",
+        "zi_intercept",
+        "beta",
+    ],
     round_to=4,
 )
 print(summary_main)
-
-summary_all = az.summary(trace, round_to=4)
-print(summary_all.head())
 
 rhat = az.rhat(trace)
 ess_bulk = az.ess(trace, method="bulk")
@@ -601,69 +643,37 @@ rhat_values = [
     da_mean(rhat["beta"]),
     da_mean(rhat["alpha_group"]),
     da_mean(rhat["sigma_group"]),
-    da_mean(rhat["z_group"]),
 ]
 
 ess_bulk_values = [
     da_mean(ess_bulk["beta"]),
     da_mean(ess_bulk["alpha_group"]),
     da_mean(ess_bulk["sigma_group"]),
-    da_mean(ess_bulk["z_group"]),
 ]
 
 ess_tail_values = [
     da_mean(ess_tail["beta"]),
     da_mean(ess_tail["alpha_group"]),
     da_mean(ess_tail["sigma_group"]),
-    da_mean(ess_tail["z_group"]),
 ]
 
-weights = {
-    "beta": 2,
-    "alpha_group": 1,
-    "sigma_group": 1,
-    "z_group": 3,
-}
+weights = [2, 2, 1]
 
-weighted_rhat = weighted_average(rhat_values, list(weights.values()))
-weighted_ess_bulk = weighted_average(ess_bulk_values, list(weights.values()))
-weighted_ess_tail = weighted_average(ess_tail_values, list(weights.values()))
-
-print(f"Weighted Rhat: {weighted_rhat:.4f}")
-print(f"Weighted ESS Bulk: {weighted_ess_bulk:.2f}")
-print(f"Weighted ESS Tail: {weighted_ess_tail:.2f}")
+print(f"Weighted Rhat: {weighted_average(rhat_values, weights):.4f}")
+print(f"Weighted ESS Bulk: {weighted_average(ess_bulk_values, weights):.2f}")
+print(f"Weighted ESS Tail: {weighted_average(ess_tail_values, weights):.2f}")
 
 
 # =========================================================
-# WAIC and LOO
+# WAIC / LOO
 # =========================================================
 waic_result = az.waic(trace)
-print("WAIC Result:")
-print(waic_result)
-print(f"WAIC (elpd_waic): {waic_result.elpd_waic:.2f}")
-print(f"p_WAIC: {waic_result.p_waic:.2f}")
-
 loo_result = az.loo(trace)
-print("\nLOO Result:")
+
+print("WAIC:")
+print(waic_result)
+print("LOO:")
 print(loo_result)
-print(f"LOO (elpd_loo): {loo_result.elpd_loo:.2f}")
-print(f"p_LOO: {loo_result.p_loo:.2f}")
-
-k_vals = loo_result.pareto_k.values
-high_k_idx = np.where(k_vals > 0.7)[0]
-print(f"Num high Pareto-k points (> 0.7): {len(high_k_idx)}")
-
-
-# =========================================================
-# Effect size summaries
-# =========================================================
-beta_summary = az.summary(trace, var_names=["beta"], round_to=4)
-beta_means = beta_summary["mean"].to_numpy()
-percent_effect = np.exp(beta_means) - 1
-
-print("\nApprox multiplicative effect of +1 SD in each covariate:")
-for name, val in zip(covariates, percent_effect):
-    print(f"{name}: {val * 100:.2f}% change in expected cases")
 
 
 # =========================================================
@@ -693,30 +703,36 @@ ppc_y_std = (
     .values
 )
 
-print("\nFitted mean range:", float(fitted_mu_mean.min()), "to", float(fitted_mu_mean.max()))
 print("Observed range:", int(y.min()), "to", int(y.max()))
-print("Std of fitted means:", float(np.std(fitted_mu_mean)))
+print("Fitted mu range:", float(fitted_mu_mean.min()), "to", float(fitted_mu_mean.max()))
+print("Predicted y range:", float(ppc_y_mean.min()), "to", float(ppc_y_mean.max()))
+print("Std of fitted mu:", float(np.std(fitted_mu_mean)))
 
-alpha_group_mean = trace.posterior["alpha_group"].mean(dim=["chain", "draw"]).values
-beta_mean = trace.posterior["beta"].mean(dim=["chain", "draw"]).values
-eta_covariate = X @ beta_mean
 
-print("Alpha_group range:", float(alpha_group_mean.min()), "to", float(alpha_group_mean.max()))
-print("Covariate contribution range:", float(eta_covariate.min()), "to", float(eta_covariate.max()))
-print("Mean alpha_group:", float(alpha_group_mean.mean()))
-print("Mean covariate contribution:", float(eta_covariate.mean()))
+# =========================================================
+# Effect summaries
+# =========================================================
+beta_summary = az.summary(trace, var_names=["beta"], round_to=4)
+beta_means = beta_summary["mean"].to_numpy()
+percent_effect = np.exp(beta_means) - 1
+
+print("\nApprox multiplicative effect of +1 SD in each covariate:")
+for name, val in zip(covariates, percent_effect):
+    print(f"{name}: {val * 100:.2f}% change in expected cases")
 
 
 # =========================================================
 # Prediction helper
-# If municipio is supplied and known, use that municipio's posterior intercept.
-# Otherwise, fall back to alpha_global.
+# For new rows, supply:
+# municipio, year, week, and all covariates including log_cases_lag1
 # =========================================================
 posterior_samples = trace.posterior.stack(sample=("chain", "draw"))
 
 beta_draws = posterior_samples["beta"].values
 alpha_global_draws = posterior_samples["alpha_global"].values
 alpha_group_draws = posterior_samples["alpha_group"].values
+week_effect_draws = posterior_samples["week_effect"].values
+year_effect_draws = posterior_samples["year_effect"].values
 
 municipio_to_idx = {m: i for i, m in enumerate(municipios)}
 
@@ -724,9 +740,12 @@ municipio_to_idx = {m: i for i, m in enumerate(municipios)}
 def predict_expected_cases(new_df: pd.DataFrame) -> np.ndarray:
     new_df = new_df.copy()
 
-    for col in covariates:
-        if col not in new_df.columns:
-            raise ValueError(f"Missing covariate in new_df: {col}")
+    required_cols = ["municipio", "year", "week"] + covariates
+    missing = [c for c in required_cols if c not in new_df.columns]
+    if missing:
+        raise ValueError(f"Missing columns in new_df: {missing}")
+
+    new_df["municipio"] = new_df["municipio"].apply(normalize_municipio_name)
 
     if APPLY_LOG1P_TO_SKEWED_FEATURES:
         for col in SKEWED_FEATURES:
@@ -735,28 +754,44 @@ def predict_expected_cases(new_df: pd.DataFrame) -> np.ndarray:
 
     X_new = scaler.transform(new_df[covariates])
 
-    if "municipio" in new_df.columns:
-        normalized_names = new_df["municipio"].apply(normalize_municipio_name)
-        intercept_draws = np.zeros((len(new_df), alpha_global_draws.shape[0]))
+    n_new = len(new_df)
+    n_draws = alpha_global_draws.shape[0]
 
-        for i, muni_name in enumerate(normalized_names):
-            if muni_name in municipio_to_idx:
-                intercept_draws[i, :] = alpha_group_draws[municipio_to_idx[muni_name], :]
-            else:
-                intercept_draws[i, :] = alpha_global_draws
-    else:
-        intercept_draws = np.tile(alpha_global_draws, (len(new_df), 1))
+    intercept_draws = np.zeros((n_new, n_draws))
+    week_draws = np.zeros((n_new, n_draws))
+    year_draws = np.zeros((n_new, n_draws))
 
-    eta_new = intercept_draws + X_new @ beta_draws
+    for i, row in new_df.iterrows():
+        muni = row["municipio"]
+        year_val = int(row["year"])
+        week_val = int(row["week"])
+
+        if muni in municipio_to_idx:
+            intercept_draws[i, :] = alpha_group_draws[municipio_to_idx[muni], :]
+        else:
+            intercept_draws[i, :] = alpha_global_draws
+
+        if week_val in week_to_idx:
+            week_draws[i, :] = week_effect_draws[week_to_idx[week_val], :]
+        else:
+            week_draws[i, :] = 0.0
+
+        if year_val in year_to_idx:
+            year_draws[i, :] = year_effect_draws[year_to_idx[year_val], :]
+        else:
+            year_draws[i, :] = 0.0
+
+    eta_new = intercept_draws + week_draws + year_draws + X_new @ beta_draws
     mu_new = np.exp(eta_new)
     return mu_new.mean(axis=1)
 
 
 # =========================================================
-# Optional quick sanity check
+# Quick sanity check
 # =========================================================
-example_rows = df.sample(min(5, len(df)), random_state=42).copy()
-example_pred = predict_expected_cases(example_rows[["municipio"] + covariates])
+sample_cols = ["municipio", "year", "week"] + covariates + ["cases"]
+example_rows = df[sample_cols].sample(min(10, len(df)), random_state=42).copy()
+example_pred = predict_expected_cases(example_rows[["municipio", "year", "week"] + covariates])
 
 print("\nExample predictions:")
 for muni, actual, pred in zip(example_rows["municipio"], example_rows["cases"], example_pred):
@@ -769,24 +804,22 @@ for muni, actual, pred in zip(example_rows["municipio"], example_rows["cases"], 
 if MAKE_PLOTS:
     posterior_means = trace.posterior["beta"].mean(dim=["chain", "draw"]).values
     posterior_stds = trace.posterior["beta"].std(dim=["chain", "draw"]).values
-    num_vars = len(posterior_means)
 
     plt.figure(figsize=(14, 6))
 
     plt.subplot(1, 2, 1)
     plt.errorbar(
-        range(num_vars),
+        range(len(covariates)),
         posterior_means,
         yerr=posterior_stds,
         fmt="o",
         capsize=5,
     )
-    plt.xticks(range(num_vars), covariates, rotation=45, ha="right")
-    plt.axhline(0, color="red", linestyle="--", label="No effect")
+    plt.xticks(range(len(covariates)), covariates, rotation=45, ha="right")
+    plt.axhline(0, color="red", linestyle="--")
     plt.xlabel("Covariates")
     plt.ylabel("Posterior mean coefficient ± SD")
     plt.title("Posterior Coefficients")
-    plt.legend()
 
     plt.subplot(1, 2, 2)
     plt.errorbar(
@@ -794,24 +827,30 @@ if MAKE_PLOTS:
         fitted_mu_mean,
         yerr=fitted_mu_std,
         fmt="o",
-        alpha=0.25,
+        alpha=0.2,
         capsize=2,
     )
     line_min = min(float(y.min()), float(fitted_mu_mean.min()))
     line_max = max(float(y.max()), float(fitted_mu_mean.max()))
-    plt.plot([line_min, line_max], [line_min, line_max], "r--", label="y = fitted mean")
+    plt.plot([line_min, line_max], [line_min, line_max], "r--")
     plt.xlabel("Actual cases")
     plt.ylabel("Fitted expected cases")
     plt.title("Fitted Expected Cases vs Actual Cases")
-    plt.legend()
 
     plt.tight_layout()
     plt.show()
 
-    az.plot_trace(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
-    plt.tight_layout()
-    plt.show()
-
-    az.plot_posterior(trace, var_names=["alpha_global", "sigma_group", "alpha_nb", "beta"])
+    az.plot_trace(
+        trace,
+        var_names=[
+            "alpha_global",
+            "sigma_group",
+            "sigma_week",
+            "sigma_year",
+            "alpha_nb",
+            "zi_intercept",
+            "beta",
+        ],
+    )
     plt.tight_layout()
     plt.show()
