@@ -57,6 +57,29 @@ def da_mean(x):
     return float(np.asarray(x).mean())
 
 
+def to_entity_sample_array(x, entity_size):
+    """
+    Convert posterior object to numpy array with shape:
+    (entity_size, n_samples) if entity dimension exists
+    or (n_samples,) for scalar arrays.
+    """
+    arr = np.asarray(x)
+
+    if arr.ndim == 1:
+        return arr
+
+    if arr.shape[0] == entity_size:
+        return arr
+
+    if arr.shape[-1] == entity_size:
+        return np.moveaxis(arr, -1, 0)
+
+    raise ValueError(
+        f"Could not align array with entity_size={entity_size}. "
+        f"Observed shape: {arr.shape}"
+    )
+
+
 # =========================================================
 # Config
 # =========================================================
@@ -153,7 +176,12 @@ lookup_df = (
     .rename(columns={"city_clean": "municipio", "ibgeid": "ibge_code"})
 )
 
+dup_counts = lookup_df.groupby("municipio")["ibge_code"].nunique()
+ambiguous_after_filter = dup_counts[dup_counts > 1]
+
 print("RJ municipios in lookup:", len(lookup_df))
+print("Ambiguous names after state filter:")
+print(ambiguous_after_filter)
 
 
 # =========================================================
@@ -177,6 +205,7 @@ def restrict_years(d):
     d = d.dropna(subset=["year", "week"]).copy()
     d = d[(d["year"] >= START_YEAR) & (d["year"] <= END_YEAR)].copy()
     return d
+
 
 cases_df = restrict_years(cases_df)
 temp_df = restrict_years(temp_df)
@@ -439,7 +468,6 @@ df = df.sort_values(["municipio", "date"]).copy()
 df["cases_lag1"] = df.groupby("municipio")["cases"].shift(1)
 df["log_cases_lag1"] = np.log1p(df["cases_lag1"])
 
-# Drop first observed week per municipio
 df = df.dropna(subset=["cases_lag1"]).copy()
 
 print("Row count after lag creation:", len(df))
@@ -518,13 +546,14 @@ coords = {
     "obs_id": np.arange(len(df)),
 }
 
+lag_col_idx = covariates.index("log_cases_lag1")
+
 with pm.Model(coords=coords) as model:
     X_data = pm.Data("X_data", X, dims=("obs_id", "covariate"))
     group_data = pm.Data("group_data", group_idx, dims="obs_id")
     week_data = pm.Data("week_data", week_idx, dims="obs_id")
     year_data = pm.Data("year_data", year_idx, dims="obs_id")
 
-    # Municipality intercepts
     alpha_global = pm.Normal(
         "alpha_global",
         mu=np.log(np.maximum(y.mean(), 1.0)),
@@ -546,7 +575,6 @@ with pm.Model(coords=coords) as model:
         dims="municipio",
     )
 
-    # Week-of-year effect
     sigma_week = pm.HalfNormal("sigma_week", sigma=1.0)
     week_raw = pm.Normal("week_raw", mu=0.0, sigma=1.0, dims="week_level")
     week_effect = pm.Deterministic(
@@ -555,7 +583,6 @@ with pm.Model(coords=coords) as model:
         dims="week_level",
     )
 
-    # Year effect
     sigma_year = pm.HalfNormal("sigma_year", sigma=1.0)
     year_raw = pm.Normal("year_raw", mu=0.0, sigma=1.0, dims="year_level")
     year_effect = pm.Deterministic(
@@ -564,7 +591,6 @@ with pm.Model(coords=coords) as model:
         dims="year_level",
     )
 
-    # Covariate coefficients
     beta = pm.Normal("beta", mu=0.0, sigma=1.5, dims="covariate")
 
     eta = (
@@ -576,16 +602,13 @@ with pm.Model(coords=coords) as model:
 
     mu = pm.Deterministic("mu", pm.math.exp(eta), dims="obs_id")
 
-    # Overdispersion
     alpha_nb = pm.Exponential("alpha_nb", lam=1.0)
 
-    # Zero-inflation
-    zi_intercept = pm.Normal("zi_intercept", mu=0.0, sigma=1.5)
-    psi = pm.Deterministic(
-        "psi",
-        pm.math.sigmoid(zi_intercept),
-        dims=(),
-    )
+    zi_intercept = pm.Normal("zi_intercept", mu=-1.5, sigma=1.0)
+    zi_beta_lag = pm.Normal("zi_beta_lag", mu=-1.0, sigma=0.75)
+
+    logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]
+    psi = pm.Deterministic("psi", pm.math.sigmoid(logit_psi), dims="obs_id")
 
     pm.ZeroInflatedNegativeBinomial(
         "y_obs",
@@ -597,8 +620,8 @@ with pm.Model(coords=coords) as model:
     )
 
     trace = pm.sample(
-        draws=1000,
-        tune=1500,
+        draws=400,
+        tune=600,
         chains=4,
         cores=4,
         target_accept=0.98,
@@ -629,6 +652,7 @@ summary_main = az.summary(
         "sigma_year",
         "alpha_nb",
         "zi_intercept",
+        "zi_beta_lag",
         "beta",
     ],
     round_to=4,
@@ -723,16 +747,30 @@ for name, val in zip(covariates, percent_effect):
 
 # =========================================================
 # Prediction helper
-# For new rows, supply:
-# municipio, year, week, and all covariates including log_cases_lag1
 # =========================================================
 posterior_samples = trace.posterior.stack(sample=("chain", "draw"))
 
-beta_draws = posterior_samples["beta"].values
-alpha_global_draws = posterior_samples["alpha_global"].values
-alpha_group_draws = posterior_samples["alpha_group"].values
-week_effect_draws = posterior_samples["week_effect"].values
-year_effect_draws = posterior_samples["year_effect"].values
+beta_draws = to_entity_sample_array(
+    posterior_samples["beta"].values,
+    len(covariates),
+)
+
+alpha_global_draws = np.asarray(posterior_samples["alpha_global"].values).reshape(-1)
+
+alpha_group_draws = to_entity_sample_array(
+    posterior_samples["alpha_group"].values,
+    len(municipios),
+)
+
+week_effect_draws = to_entity_sample_array(
+    posterior_samples["week_effect"].values,
+    len(week_levels),
+)
+
+year_effect_draws = to_entity_sample_array(
+    posterior_samples["year_effect"].values,
+    len(year_levels),
+)
 
 municipio_to_idx = {m: i for i, m in enumerate(municipios)}
 
@@ -761,25 +799,25 @@ def predict_expected_cases(new_df: pd.DataFrame) -> np.ndarray:
     week_draws = np.zeros((n_new, n_draws))
     year_draws = np.zeros((n_new, n_draws))
 
-    for i, row in new_df.iterrows():
+    for row_pos, (_, row) in enumerate(new_df.iterrows()):
         muni = row["municipio"]
         year_val = int(row["year"])
         week_val = int(row["week"])
 
         if muni in municipio_to_idx:
-            intercept_draws[i, :] = alpha_group_draws[municipio_to_idx[muni], :]
+            intercept_draws[row_pos, :] = alpha_group_draws[municipio_to_idx[muni], :]
         else:
-            intercept_draws[i, :] = alpha_global_draws
+            intercept_draws[row_pos, :] = alpha_global_draws
 
         if week_val in week_to_idx:
-            week_draws[i, :] = week_effect_draws[week_to_idx[week_val], :]
+            week_draws[row_pos, :] = week_effect_draws[week_to_idx[week_val], :]
         else:
-            week_draws[i, :] = 0.0
+            week_draws[row_pos, :] = 0.0
 
         if year_val in year_to_idx:
-            year_draws[i, :] = year_effect_draws[year_to_idx[year_val], :]
+            year_draws[row_pos, :] = year_effect_draws[year_to_idx[year_val], :]
         else:
-            year_draws[i, :] = 0.0
+            year_draws[row_pos, :] = 0.0
 
     eta_new = intercept_draws + week_draws + year_draws + X_new @ beta_draws
     mu_new = np.exp(eta_new)
@@ -849,6 +887,7 @@ if MAKE_PLOTS:
             "sigma_year",
             "alpha_nb",
             "zi_intercept",
+            "zi_beta_lag",
             "beta",
         ],
     )
