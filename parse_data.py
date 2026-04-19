@@ -85,7 +85,7 @@ def to_entity_sample_array(x, entity_size):
 # =========================================================
 TARGET_STATE = "RJ"
 START_YEAR = 2017
-END_YEAR = 2022
+END_YEAR = 2019
 
 MAKE_PLOTS = True
 APPLY_LOG1P_TO_SKEWED_FEATURES = True
