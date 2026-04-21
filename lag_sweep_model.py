@@ -132,7 +132,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 # Config
 # =========================================================
 TARGET_STATE = "RJ"
-START_YEAR = 2017
+START_YEAR = 2020
 END_YEAR = 2022
 
 
