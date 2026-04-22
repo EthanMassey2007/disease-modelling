@@ -121,8 +121,8 @@ ACCURACY_LABEL = "WAPE-based accuracy (%)"
 
 # Keep the same model settings as your original script.
 # If the lag sweep is too slow, reduce these.
-DRAWS = 800
-TUNE = 1200
+DRAWS = 1000
+TUNE = 2000
 CHAINS = 4
 CORES = 4
 TARGET_ACCEPT = 0.98
@@ -726,18 +726,7 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
        zi_intercept = pm.Normal("zi_intercept", mu=-1.5, sigma=1.0)
        zi_beta_lag = pm.Normal("zi_beta_lag", mu=1.0, sigma=0.75)  # Positive impact
 
-       logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]  # Positive effect of lag
-       psi = pm.Deterministic("psi", pm.math.sigmoid(logit_psi), dims="obs_id")
-
-
-       pm.ZeroInflatedNegativeBinomial(
-           "y_obs",
-           psi=psi,
-           mu=mu,
-           alpha=alpha_nb,
-           observed=y,
-           dims="obs_id",
-       )
+       pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha_nb, observed=y, dims="obs_id")
 
 
        trace = pm.sample(
@@ -801,6 +790,9 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
    rhat = az.rhat(trace)
    ess_bulk = az.ess(trace, method="bulk")
    ess_tail = az.ess(trace, method="tail")
+
+   summary = az.summary(trace)
+   print(summary[["r_hat", "ess_bulk", "ess_tail"]])
 
 
    rhat_values = [
@@ -980,3 +972,6 @@ def main():
 
 if __name__ == "__main__":
    main()
+
+
+
