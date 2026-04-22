@@ -121,8 +121,8 @@ ACCURACY_LABEL = "WAPE-based accuracy (%)"
 
 # Keep the same model settings as your original script.
 # If the lag sweep is too slow, reduce these.
-DRAWS = 800
-TUNE = 1200
+DRAWS = 1000
+TUNE = 2000
 CHAINS = 4
 CORES = 4
 TARGET_ACCEPT = 0.98
@@ -801,6 +801,9 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
    rhat = az.rhat(trace)
    ess_bulk = az.ess(trace, method="bulk")
    ess_tail = az.ess(trace, method="tail")
+
+   summary = az.summary(trace)
+   print(summary[["r_hat", "ess_bulk", "ess_tail"]])
 
 
    rhat_values = [
