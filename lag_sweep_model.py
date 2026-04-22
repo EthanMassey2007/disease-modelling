@@ -913,7 +913,9 @@ def main():
        results_df.to_csv(results_path, index=False)
        print(f"Saved lag comparison table to: {results_path}")
 
-
+   zero_percentage = np.mean(y == 0) * 100
+   print(f"Percentage of zeros in target variable: {zero_percentage:.2f}%")
+   
    if MAKE_PLOTS:
        # -------------------------------------------------
        # Plot 1: accuracy by lag
