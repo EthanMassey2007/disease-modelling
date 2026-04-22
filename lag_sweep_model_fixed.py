@@ -598,7 +598,9 @@ def prepare_lagged_dataframe(df_base: pd.DataFrame, lag_weeks: int):
    group_idx = df["municipio_idx"].to_numpy(dtype=np.int32)
    week_idx = df["week_idx"].to_numpy(dtype=np.int32)
    year_idx = df["year_idx"].to_numpy(dtype=np.int32)
-
+   
+   zero_percentage = np.mean(y == 0) * 100
+   print(f"Percentage of zeros in target variable: {zero_percentage:.2f}%")
 
    print("Mean of cases:", float(df["cases"].mean()))
    print("Variance of cases:", float(df["cases"].var()))
@@ -653,6 +655,12 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
 
 
    lag_col_idx = covariates.index(lag_log_col)
+
+
+   print("Final X shape:", X.shape)
+   print("Final y shape:", y.shape)
+   print("Number of covariates:", len(covariates))
+   print("Lag covariate:", lag_log_col, "at column index", lag_col_idx)
 
 
    with pm.Model(coords=coords) as model:
@@ -722,11 +730,9 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
        alpha_nb = pm.Exponential("alpha_nb", lam=1.0)
 
 
-       # Reversed sign on lag impact
-       zi_intercept = pm.Normal("zi_intercept", mu=-1.5, sigma=1.0)
-       zi_beta_lag = pm.Normal("zi_beta_lag", mu=1.0, sigma=0.75)  # Positive impact
-
-       logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]  # Positive effect of lag
+       zi_intercept = pm.Normal("zi_intercept", mu=0.0, sigma=1.5)
+       zi_beta_lag = pm.Normal("zi_beta_lag", mu=0.0, sigma=1.5)
+       logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]
        psi = pm.Deterministic("psi", pm.math.sigmoid(logit_psi), dims="obs_id")
 
 
@@ -913,9 +919,7 @@ def main():
        results_df.to_csv(results_path, index=False)
        print(f"Saved lag comparison table to: {results_path}")
 
-   zero_percentage = np.mean(y == 0) * 100
-   print(f"Percentage of zeros in target variable: {zero_percentage:.2f}%")
-   
+
    if MAKE_PLOTS:
        # -------------------------------------------------
        # Plot 1: accuracy by lag

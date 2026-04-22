@@ -726,7 +726,18 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
        zi_intercept = pm.Normal("zi_intercept", mu=-1.5, sigma=1.0)
        zi_beta_lag = pm.Normal("zi_beta_lag", mu=1.0, sigma=0.75)  # Positive impact
 
-       pm.NegativeBinomial("y_obs", mu=mu, alpha=alpha_nb, observed=y, dims="obs_id")
+       logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]  # Positive effect of lag
+       psi = pm.Deterministic("psi", pm.math.sigmoid(logit_psi), dims="obs_id")
+
+
+       pm.ZeroInflatedNegativeBinomial(
+           "y_obs",
+           psi=psi,
+           mu=mu,
+           alpha=alpha_nb,
+           observed=y,
+           dims="obs_id",
+       )
 
 
        trace = pm.sample(
