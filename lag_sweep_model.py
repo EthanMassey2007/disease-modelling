@@ -103,7 +103,7 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 # =========================================================
 TARGET_STATE = "RJ"
 START_YEAR = 2017
-END_YEAR = 2019
+END_YEAR = 2022
 
 START_LAG = 2
 END_LAG = 2
@@ -722,11 +722,11 @@ def fit_one_lag(df_base: pd.DataFrame, lag_weeks: int):
        alpha_nb = pm.Exponential("alpha_nb", lam=1.0)
 
 
+       # Reversed sign on lag impact
        zi_intercept = pm.Normal("zi_intercept", mu=-1.5, sigma=1.0)
-       zi_beta_lag = pm.Normal("zi_beta_lag", mu=-1.0, sigma=0.75)
+       zi_beta_lag = pm.Normal("zi_beta_lag", mu=1.0, sigma=0.75)  # Positive impact
 
-
-       logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]
+       logit_psi = zi_intercept + zi_beta_lag * X_data[:, lag_col_idx]  # Positive effect of lag
        psi = pm.Deterministic("psi", pm.math.sigmoid(logit_psi), dims="obs_id")
 
 
