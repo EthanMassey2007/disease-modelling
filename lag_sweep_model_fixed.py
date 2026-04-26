@@ -990,3 +990,6 @@ if __name__ == "__main__":
 
 
 
+#test out different lags, revise heirarchical structure with different confounding variables, 
+#add covid as a "dummy variable" look into R implementation of lag, break into phases (years maybe) and check 
+#each covariates impact in each phase and compare
